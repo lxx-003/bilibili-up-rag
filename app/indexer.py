@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pickle
 import re
@@ -16,6 +17,8 @@ from rank_bm25 import BM25Okapi
 from app.llm import get_embedding_dimensions, get_embedding_model, embed_texts, get_base_url
 from app.models import ChunkDocument, VideoDocument
 from app.srt_parser import parse_srt
+
+jieba.setLogLevel(logging.ERROR)
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data" / "subs"
