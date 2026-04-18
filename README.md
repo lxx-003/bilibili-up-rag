@@ -90,6 +90,14 @@ curl "http://127.0.0.1:8000/api/search?q=圣多美为什么发展不起来"
 - `text`
 - `scores`
 
+## 清除索引
+
+如需强制重建索引，删除以下两个目录后重启即可：
+
+```bash
+rm -rf data/index data/chroma
+```
+
 ## 后续可继续增强
 
 - 引入真正的 cross-encoder reranker

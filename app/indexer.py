@@ -19,6 +19,8 @@ from app.models import ChunkDocument, VideoDocument
 from app.srt_parser import parse_srt
 
 jieba.setLogLevel(logging.ERROR)
+logger = logging.getLogger("app.indexer")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)s  %(message)s")
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data" / "subs"
@@ -62,7 +64,9 @@ DEFAULT_VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))
 
 def ensure_index() -> None:
     if _index_is_compatible():
+        logger.info("索引已存在且兼容，跳过重建")
         return
+    logger.info("索引不存在或不兼容，开始重建...")
     build_index()
 
 
@@ -75,14 +79,21 @@ def build_index() -> None:
     if DEFAULT_VIDEO_LIMIT > 0:
         source_paths = source_paths[:DEFAULT_VIDEO_LIMIT]
 
-    for path in source_paths:
+    total_files = len(source_paths)
+    logger.info("┌─ 开始构建索引 ─────────────────────────────")
+    logger.info("│  发现 %d 个字幕文件（VIDEO_LIMIT=%s）", total_files, DEFAULT_VIDEO_LIMIT)
+
+    for file_index, path in enumerate(source_paths, start=1):
         parsed = _parse_filename(path)
         if parsed is None:
+            logger.info("│  [%d/%d] 跳过（文件名不匹配）: %s", file_index, total_files, path.name)
             continue
         title, video_id = parsed
         cues = parse_srt(path)
         if not cues:
+            logger.info("│  [%d/%d] 跳过（无字幕）: %s", file_index, total_files, title)
             continue
+        logger.info("│  [%d/%d] 解析视频: %s  (%d 条字幕)", file_index, total_files, title, len(cues))
         full_text = " ".join(cue.text for cue in cues)
         video_keywords = _top_keywords(f"{title} {full_text}", limit=18)
         video_entities = _extract_entities(f"{title} {full_text}", limit=14)
@@ -98,15 +109,21 @@ def build_index() -> None:
         )
         video_docs.append(video_doc)
 
+        chunk_count_before = len(chunk_docs)
         for chunk_index, chunk in enumerate(_build_chunks(title, video_id, path, cues, video_summary)):
             chunk_docs.append(chunk)
             graph_terms = set(chunk.keyword_list[:10] + chunk.entity_list[:10])
             for term in graph_terms:
                 others = graph_terms - {term}
                 graph[term].update(others)
+        logger.info("│         → 生成 %d 个分块", len(chunk_docs) - chunk_count_before)
 
+    logger.info("│  视频解析完成: %d 个视频, %d 个分块", len(video_docs), len(chunk_docs))
+    logger.info("│  构建 BM25 检索矩阵...")
     _fit_retrieval_artifacts(chunk_docs)
+    logger.info("│  构建向量数据库（Chroma）..."  )
     _build_chroma_collection(chunk_docs)
+    logger.info("│  保存索引文件...")
     CHUNKS_PATH.write_text(
         json.dumps([chunk.to_dict() for chunk in chunk_docs], ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -131,6 +148,7 @@ def build_index() -> None:
         json.dumps(metadata, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    logger.info("└─ 索引构建完成 ✓  %d 个视频, %d 个分块", len(video_docs), len(chunk_docs))
 
 
 def load_index_payload() -> tuple[list[dict], dict, dict, dict]:
@@ -325,8 +343,10 @@ def _build_chroma_collection(chunk_docs: list[ChunkDocument]) -> None:
     )
 
     batch_size = 10
-    for start in range(0, len(chunk_docs), batch_size):
+    total_batches = (len(chunk_docs) + batch_size - 1) // batch_size
+    for batch_index, start in enumerate(range(0, len(chunk_docs), batch_size), start=1):
         batch = chunk_docs[start : start + batch_size]
+        logger.info("│     Embedding 批次 %d/%d  (%d 条)", batch_index, total_batches, len(batch))
         documents = [
             "\n".join(
                 [
