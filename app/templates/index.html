@@ -56,25 +56,40 @@
       <div id="results-list">
       {% for hit in hits %}
       <article class="result-item">
-        <div class="item-head">
-          <div>
-            <h3>{{ hit.chunk.video_title }}</h3>
-            <p class="meta">
-              <span>{{ hit.chunk.video_id }}</span>
-              <span>{{ "%.1f"|format(hit.chunk.start_time) }}s - {{ "%.1f"|format(hit.chunk.end_time) }}s</span>
-              <span>{{ hit.chunk.section_title }}</span>
-            </p>
+        <div class="rank-stripe"></div>
+        <div class="item-body">
+          <div class="item-head">
+            <div>
+              <h3>{{ hit.chunk.video_title }}</h3>
+              <div class="meta">
+                <span class="meta-tag"><span class="meta-icon">⏱</span>{{ "%.0f"|format(hit.chunk.start_time // 60) }}:{{ "%02d"|format((hit.chunk.start_time % 60)|int) }} – {{ "%.0f"|format(hit.chunk.end_time // 60) }}:{{ "%02d"|format((hit.chunk.end_time % 60)|int) }}</span>
+                <span class="meta-tag"><span class="meta-icon">§</span>{{ hit.chunk.section_title }}</span>
+                <span class="meta-tag">{{ hit.chunk.video_id }}</span>
+              </div>
+            </div>
+            <a href="{{ hit.chunk.jump_url }}" target="_blank" rel="noreferrer">空降观看</a>
           </div>
-          <a href="{{ hit.chunk.jump_url }}" target="_blank" rel="noreferrer">空降观看</a>
-        </div>
-        <p class="summary">{{ hit.chunk.summary }}</p>
-        <p class="explanation">{{ hit.explanation }}</p>
-        <pre>{{ hit.chunk.text }}</pre>
-        <div class="score-row">
-          <span>总分 {{ "%.3f"|format(hit.rerank_score) }}</span>
-          <span>BM25 {{ "%.3f"|format(hit.bm25_score) }}</span>
-          <span>向量 {{ "%.3f"|format(hit.vector_score) }}</span>
-          <span>图谱 {{ "%.3f"|format(hit.graph_score) }}</span>
+          <p class="summary">{{ hit.chunk.summary }}</p>
+          <div class="explanation">
+            {% for part in hit.explanation.split(' + ') %}
+            <span class="expl-tag {% if '关键词' in part %}kw{% elif '语义' in part %}vec{% elif '实体' in part or '扩展' in part %}gr{% elif '标题' in part %}ttl{% else %}ctx{% endif %}">{{ part }}</span>
+            {% endfor %}
+          </div>
+          <pre>{{ hit.chunk.text }}</pre>
+          {% set total = hit.bm25_score + hit.vector_score + hit.graph_score %}
+          {% if total > 0 %}
+          <div class="score-bar">
+            <div class="score-seg s-bm25" style="width:{{ (hit.bm25_score / total * 100)|round(1) }}%"></div>
+            <div class="score-seg s-vector" style="width:{{ (hit.vector_score / total * 100)|round(1) }}%"></div>
+            <div class="score-seg s-graph" style="width:{{ (hit.graph_score / total * 100)|round(1) }}%"></div>
+          </div>
+          {% endif %}
+          <div class="score-legend">
+            <span><i class="score-dot d-bm25"></i>BM25 {{ "%.2f"|format(hit.bm25_score) }}</span>
+            <span><i class="score-dot d-vector"></i>向量 {{ "%.2f"|format(hit.vector_score) }}</span>
+            <span><i class="score-dot d-graph"></i>图谱 {{ "%.2f"|format(hit.graph_score) }}</span>
+            <span class="score-total">∑ {{ "%.3f"|format(hit.rerank_score) }}</span>
+          </div>
         </div>
       </article>
       {% endfor %}
@@ -227,31 +242,63 @@
       window.history.replaceState({}, "", url);
     }
 
+    function explTagClass(part) {
+      if (part.includes("关键词")) return "kw";
+      if (part.includes("语义")) return "vec";
+      if (part.includes("实体") || part.includes("扩展")) return "gr";
+      if (part.includes("标题")) return "ttl";
+      return "ctx";
+    }
+
+    function fmtTime(sec) {
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s.toString().padStart(2, "0")}`;
+    }
+
     function renderHits(hits) {
-      resultsList.innerHTML = hits.map((hit) => `
+      resultsList.innerHTML = hits.map((hit) => {
+        const total = hit.scores.bm25 + hit.scores.vector + hit.scores.graph;
+        const explParts = (hit.explanation || "").split(" + ").filter(Boolean);
+        const explTags = explParts.map((p) =>
+          `<span class="expl-tag ${explTagClass(p)}">${escapeHtml(p)}</span>`
+        ).join("");
+
+        const scoreBar = total > 0 ? `
+          <div class="score-bar">
+            <div class="score-seg s-bm25" style="width:${(hit.scores.bm25 / total * 100).toFixed(1)}%"></div>
+            <div class="score-seg s-vector" style="width:${(hit.scores.vector / total * 100).toFixed(1)}%"></div>
+            <div class="score-seg s-graph" style="width:${(hit.scores.graph / total * 100).toFixed(1)}%"></div>
+          </div>` : "";
+
+        return `
         <article class="result-item">
-          <div class="item-head">
-            <div>
-              <h3>${escapeHtml(hit.video_title)}</h3>
-              <p class="meta">
-                <span>${escapeHtml(hit.video_id)}</span>
-                <span>${hit.start_time.toFixed(1)}s - ${hit.end_time.toFixed(1)}s</span>
-                <span>${escapeHtml(hit.section_title || "")}</span>
-              </p>
+          <div class="rank-stripe"></div>
+          <div class="item-body">
+            <div class="item-head">
+              <div>
+                <h3>${escapeHtml(hit.video_title)}</h3>
+                <div class="meta">
+                  <span class="meta-tag"><span class="meta-icon">⏱</span>${fmtTime(hit.start_time)} – ${fmtTime(hit.end_time)}</span>
+                  <span class="meta-tag"><span class="meta-icon">§</span>${escapeHtml(hit.section_title || "")}</span>
+                  <span class="meta-tag">${escapeHtml(hit.video_id)}</span>
+                </div>
+              </div>
+              <a href="${escapeHtml(hit.jump_url)}" target="_blank" rel="noreferrer">空降观看</a>
             </div>
-            <a href="${escapeHtml(hit.jump_url)}" target="_blank" rel="noreferrer">空降观看</a>
+            <p class="summary">${escapeHtml(hit.summary || "")}</p>
+            <div class="explanation">${explTags}</div>
+            <pre>${escapeHtml(hit.text || "")}</pre>
+            ${scoreBar}
+            <div class="score-legend">
+              <span><i class="score-dot d-bm25"></i>BM25 ${hit.scores.bm25.toFixed(2)}</span>
+              <span><i class="score-dot d-vector"></i>向量 ${hit.scores.vector.toFixed(2)}</span>
+              <span><i class="score-dot d-graph"></i>图谱 ${hit.scores.graph.toFixed(2)}</span>
+              <span class="score-total">∑ ${hit.scores.rerank.toFixed(3)}</span>
+            </div>
           </div>
-          <p class="summary">${escapeHtml(hit.summary || "")}</p>
-          <p class="explanation">${escapeHtml(hit.explanation || "")}</p>
-          <pre>${escapeHtml(hit.text || "")}</pre>
-          <div class="score-row">
-            <span>总分 ${hit.scores.rerank.toFixed(3)}</span>
-            <span>BM25 ${hit.scores.bm25.toFixed(3)}</span>
-            <span>向量 ${hit.scores.vector.toFixed(3)}</span>
-            <span>图谱 ${hit.scores.graph.toFixed(3)}</span>
-          </div>
-        </article>
-      `).join("");
+        </article>`;
+      }).join("");
       resultsCount.textContent = `${hits.length} 条结果`;
       resultsSection.classList.toggle("hidden", hits.length === 0);
       emptyState.classList.toggle("hidden", hits.length !== 0);
