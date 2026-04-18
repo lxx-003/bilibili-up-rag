@@ -80,3 +80,31 @@ def generate_answer(messages: list[dict], temperature: float = 0.2) -> str:
             if isinstance(part, dict)
         ).strip()
     return ""
+
+
+def stream_answer(messages: list[dict], temperature: float = 0.2):
+    response = get_client().chat.completions.create(
+        model=get_chat_model(),
+        messages=messages,
+        temperature=temperature,
+        stream=True,
+    )
+    for chunk in response:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        if delta is None:
+            continue
+        content = getattr(delta, "content", None)
+        if isinstance(content, str) and content:
+            yield content
+            continue
+        if isinstance(content, list):
+            text = "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict)
+            )
+            if text:
+                yield text

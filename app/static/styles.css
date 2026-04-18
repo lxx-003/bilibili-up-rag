@@ -16,7 +16,7 @@ body {
 }
 
 .search-block,
-.answer-block,
+.stream-panel,
 .result-item,
 .empty-state {
   background: #ffffff;
@@ -25,13 +25,13 @@ body {
 }
 
 .search-block,
-.answer-block,
+.stream-panel,
 .empty-state {
   padding: 24px;
 }
 
 .search-block h1,
-.answer-block h2,
+.stream-panel h2,
 .results h2,
 .result-item h3 {
   margin: 0;
@@ -73,18 +73,48 @@ body {
   padding: 12px 16px;
   text-decoration: none;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.search-form button:disabled {
+  opacity: 0.75;
+  cursor: wait;
+}
+
+.live-panels {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.stream-panel {
+  min-height: 132px;
+}
+
+.stream-panel.is-empty {
+  border-style: dashed;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.panel-head span {
+  color: #536471;
+  font-size: 14px;
 }
 
 .rewrites {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 16px;
-}
-
-.rewrites .label {
-  color: #536471;
-  padding-top: 4px;
+  margin-top: 14px;
+  min-height: 32px;
+  align-content: flex-start;
 }
 
 .rewrites code,
@@ -95,13 +125,45 @@ body {
   padding: 4px 8px;
 }
 
-.answer-block {
-  margin-top: 18px;
+.answer-content {
+  margin-top: 14px;
+  line-height: 1.7;
+  min-height: 84px;
 }
 
-.answer-block p {
-  margin: 12px 0 0;
-  line-height: 1.7;
+.answer-content p,
+.answer-content ul,
+.answer-content pre {
+  margin: 10px 0 0;
+}
+
+.answer-content p:first-child,
+.answer-content ul:first-child,
+.answer-content pre:first-child,
+.answer-content h3:first-child,
+.answer-content h4:first-child,
+.answer-content h5:first-child {
+  margin-top: 0;
+}
+
+.answer-content h3,
+.answer-content h4,
+.answer-content h5 {
+  margin: 14px 0 0;
+}
+
+.answer-content ul {
+  padding-left: 22px;
+}
+
+.answer-content li + li {
+  margin-top: 6px;
+}
+
+.answer-content code {
+  background: #edf3f7;
+  border-radius: 6px;
+  padding: 2px 5px;
 }
 
 .results {
@@ -175,6 +237,10 @@ pre {
 
 .empty-state {
   margin-top: 18px;
+}
+
+.hidden {
+  display: none;
 }
 
 @media (max-width: 720px) {

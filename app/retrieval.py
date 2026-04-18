@@ -15,7 +15,7 @@ from app.indexer import (
     _tokenize,
     load_index_payload,
 )
-from app.llm import generate_answer, is_configured, embed_texts
+from app.llm import embed_texts, is_configured, stream_answer
 from app.models import SearchHit, chunk_from_dict
 
 
@@ -47,6 +47,33 @@ class SearchEngine:
             }
 
         rewrites = self._rewrite_queries(cleaned_query)
+        ranked = self._search_hits(cleaned_query, rewrites, top_k=top_k)
+        answer = self._synthesize_answer(cleaned_query, ranked)
+        return {
+            "query": cleaned_query,
+            "rewrites": rewrites,
+            "answer": answer,
+            "hits": ranked,
+        }
+
+    def stream_search(self, query: str, top_k: int = 8):
+        cleaned_query = query.strip()
+        if not cleaned_query:
+            yield {"type": "done"}
+            return
+
+        rewrites = self._rewrite_queries(cleaned_query)
+        for rewrite in rewrites:
+            yield {"type": "rewrite", "value": rewrite}
+
+        ranked = self._search_hits(cleaned_query, rewrites, top_k=top_k)
+        yield {"type": "hits", "value": ranked}
+
+        for chunk in self._stream_answer(cleaned_query, ranked):
+            yield {"type": "answer", "value": chunk}
+        yield {"type": "done"}
+
+    def _search_hits(self, query: str, rewrites: list[str], top_k: int = 8) -> list[SearchHit]:
         scores = defaultdict(lambda: {"bm25": 0.0, "vector": 0.0, "graph": 0.0})
         vector_score_sets = self._vector_search_many(rewrites)
 
@@ -60,14 +87,7 @@ class SearchEngine:
             for idx, value in graph_scores.items():
                 scores[idx]["graph"] = max(scores[idx]["graph"], value)
 
-        ranked = self._rerank(cleaned_query, scores, top_k=top_k)
-        answer = self._synthesize_answer(cleaned_query, ranked)
-        return {
-            "query": cleaned_query,
-            "rewrites": rewrites,
-            "answer": answer,
-            "hits": ranked,
-        }
+        return self._rerank(query, scores, top_k=top_k)
 
     def _rewrite_queries(self, query: str) -> list[str]:
         rewrites = [query]
@@ -211,8 +231,12 @@ class SearchEngine:
         return deduped
 
     def _synthesize_answer(self, query: str, hits: list[SearchHit]) -> str:
+        return "".join(self._stream_answer(query, hits)).strip()
+
+    def _stream_answer(self, query: str, hits: list[SearchHit]):
         if not hits:
-            return "暂时没有找到明确命中的字幕片段，可以换一个更短的关键词，或者直接输入国家、人物、事件名。"
+            yield "暂时没有找到明确命中的字幕片段，可以换一个更短的关键词，或者直接输入国家、人物、事件名。"
+            return
         if not is_configured():
             lead = hits[0].chunk
             points = []
@@ -220,7 +244,10 @@ class SearchEngine:
                 points.append(
                     f"{hit.chunk.video_title} 在 {self._format_time(hit.chunk.start_time)} 附近提到：{hit.chunk.summary}"
                 )
-            return f"围绕“{query}”，当前最相关的内容集中在《{lead.video_title}》等视频里。" + " ".join(points)
+            fallback = f"围绕“{query}”，当前最相关的内容集中在《{lead.video_title}》等视频里。" + " ".join(points)
+            for part in self._chunk_text(fallback):
+                yield part
+            return
 
         evidence_blocks = []
         for index, hit in enumerate(hits[:4], start=1):
@@ -257,8 +284,12 @@ class SearchEngine:
             },
         ]
         try:
-            answer = generate_answer(messages)
-            return answer or "检索到了相关片段，但模型没有返回可用答案。"
+            has_content = False
+            for part in stream_answer(messages):
+                has_content = True
+                yield part
+            if not has_content:
+                yield "检索到了相关片段，但模型没有返回可用答案。"
         except Exception:
             lead = hits[0].chunk
             points = []
@@ -266,7 +297,13 @@ class SearchEngine:
                 points.append(
                     f"{hit.chunk.video_title} 在 {self._format_time(hit.chunk.start_time)} 附近提到：{hit.chunk.summary}"
                 )
-            return f"围绕“{query}”，当前最相关的内容集中在《{lead.video_title}》等视频里。" + " ".join(points)
+            fallback = f"围绕“{query}”，当前最相关的内容集中在《{lead.video_title}》等视频里。" + " ".join(points)
+            for part in self._chunk_text(fallback):
+                yield part
+
+    def _chunk_text(self, text: str, size: int = 24):
+        for index in range(0, len(text), size):
+            yield text[index:index + size]
 
     def _format_time(self, value: float) -> str:
         minutes = int(value // 60)

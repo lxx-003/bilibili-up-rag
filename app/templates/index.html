@@ -16,37 +16,44 @@
       {% endif %}
       <form method="get" action="/" class="search-form">
         <input
+          id="query-input"
           type="text"
           name="q"
           value="{{ query }}"
           placeholder="例如：圣多美为什么总是发展不起来？"
           autocomplete="off"
         />
-        <button type="submit">搜索</button>
+        <button type="submit" id="search-button">搜索</button>
       </form>
-      {% if rewrites %}
-      <div class="rewrites">
-        <span class="label">查询改写</span>
-        {% for item in rewrites %}
-        <code>{{ item }}</code>
-        {% endfor %}
+      <div class="live-panels">
+        <section class="stream-panel{% if not rewrites %} is-empty{% endif %}" id="rewrites-panel">
+          <div class="panel-head">
+            <h2>查询改写</h2>
+            <span id="rewrites-status">{% if rewrites %}已生成{% else %}等待中{% endif %}</span>
+          </div>
+          <div class="rewrites" id="rewrites-list">
+            {% for item in rewrites %}
+            <code>{{ item }}</code>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="stream-panel{% if not answer %} is-empty{% endif %}" id="answer-panel">
+          <div class="panel-head">
+            <h2>综合回答</h2>
+            <span id="answer-status">{% if answer %}已完成{% else %}等待中{% endif %}</span>
+          </div>
+          <div class="answer-content" id="answer-content">{{ answer }}</div>
+        </section>
       </div>
-      {% endif %}
     </section>
 
-    {% if answer %}
-    <section class="answer-block">
-      <h2>综合回答</h2>
-      <p>{{ answer }}</p>
-    </section>
-    {% endif %}
-
-    {% if hits %}
-    <section class="results">
+    <section class="results{% if not hits %} hidden{% endif %}" id="results-section">
       <div class="section-head">
         <h2>证据片段</h2>
-        <span>{{ hits|length }} 条结果</span>
+        <span id="results-count">{{ hits|length }} 条结果</span>
       </div>
+      <div id="results-list">
       {% for hit in hits %}
       <article class="result-item">
         <div class="item-head">
@@ -71,12 +78,272 @@
         </div>
       </article>
       {% endfor %}
+      </div>
     </section>
-    {% elif query %}
-    <section class="empty-state">
+
+    <section class="empty-state{% if hits or not query %} hidden{% endif %}" id="empty-state">
       <p>没找到结果，试试更短的关键词，或者直接搜国家、人物、事件名。</p>
     </section>
-    {% endif %}
   </main>
+
+  <script>
+    const form = document.querySelector(".search-form");
+    const input = document.getElementById("query-input");
+    const button = document.getElementById("search-button");
+    const rewritesPanel = document.getElementById("rewrites-panel");
+    const rewritesList = document.getElementById("rewrites-list");
+    const rewritesStatus = document.getElementById("rewrites-status");
+    const answerPanel = document.getElementById("answer-panel");
+    const answerContent = document.getElementById("answer-content");
+    const answerStatus = document.getElementById("answer-status");
+    const resultsSection = document.getElementById("results-section");
+    const resultsList = document.getElementById("results-list");
+    const resultsCount = document.getElementById("results-count");
+    const emptyState = document.getElementById("empty-state");
+
+    let activeController = null;
+    let answerBuffer = "";
+
+    function escapeHtml(value) {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function renderInlineMarkdown(value) {
+      return escapeHtml(value)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+        .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+        .replace(/_([^_\n]+)_/g, "<em>$1</em>");
+    }
+
+    function renderMarkdown(value) {
+      const lines = value.replace(/\r\n/g, "\n").split("\n");
+      const html = [];
+      let paragraph = [];
+      let listItems = [];
+      let inCodeBlock = false;
+      let codeLines = [];
+
+      function flushParagraph() {
+        if (!paragraph.length) {
+          return;
+        }
+        html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+        paragraph = [];
+      }
+
+      function flushList() {
+        if (!listItems.length) {
+          return;
+        }
+        html.push(`<ul>${listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ul>`);
+        listItems = [];
+      }
+
+      for (const line of lines) {
+        if (line.trim().startsWith("```")) {
+          if (inCodeBlock) {
+            html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+            codeLines = [];
+          } else {
+            flushParagraph();
+            flushList();
+          }
+          inCodeBlock = !inCodeBlock;
+          continue;
+        }
+
+        if (inCodeBlock) {
+          codeLines.push(line);
+          continue;
+        }
+
+        const trimmed = line.trim();
+        if (!trimmed) {
+          flushParagraph();
+          flushList();
+          continue;
+        }
+
+        const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+        if (heading) {
+          flushParagraph();
+          flushList();
+          const level = heading[1].length + 2;
+          html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+          continue;
+        }
+
+        const list = trimmed.match(/^(\d+\.|[-*+])\s+(.+)$/);
+        if (list) {
+          flushParagraph();
+          listItems.push(list[2]);
+          continue;
+        }
+
+        paragraph.push(trimmed);
+      }
+
+      if (inCodeBlock) {
+        html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+      }
+      flushParagraph();
+      flushList();
+      return html.join("");
+    }
+
+    function setAnswerMarkdown(value) {
+      answerBuffer = value;
+      answerContent.innerHTML = renderMarkdown(answerBuffer);
+    }
+
+    function setLoadingState(loading) {
+      button.disabled = loading;
+      button.textContent = loading ? "检索中..." : "搜索";
+    }
+
+    function resetStreamingUI(query) {
+      rewritesList.innerHTML = "";
+      setAnswerMarkdown("");
+      resultsList.innerHTML = "";
+      rewritesStatus.textContent = "生成中";
+      answerStatus.textContent = "生成中";
+      rewritesPanel.classList.remove("is-empty");
+      answerPanel.classList.remove("is-empty");
+      resultsSection.classList.add("hidden");
+      emptyState.classList.add("hidden");
+      const url = new URL(window.location.href);
+      if (query) {
+        url.searchParams.set("q", query);
+      } else {
+        url.searchParams.delete("q");
+      }
+      window.history.replaceState({}, "", url);
+    }
+
+    function renderHits(hits) {
+      resultsList.innerHTML = hits.map((hit) => `
+        <article class="result-item">
+          <div class="item-head">
+            <div>
+              <h3>${escapeHtml(hit.video_title)}</h3>
+              <p class="meta">
+                <span>${escapeHtml(hit.video_id)}</span>
+                <span>${hit.start_time.toFixed(1)}s - ${hit.end_time.toFixed(1)}s</span>
+                <span>${escapeHtml(hit.section_title || "")}</span>
+              </p>
+            </div>
+            <a href="${escapeHtml(hit.jump_url)}" target="_blank" rel="noreferrer">空降观看</a>
+          </div>
+          <p class="summary">${escapeHtml(hit.summary || "")}</p>
+          <p class="explanation">${escapeHtml(hit.explanation || "")}</p>
+          <pre>${escapeHtml(hit.text || "")}</pre>
+          <div class="score-row">
+            <span>总分 ${hit.scores.rerank.toFixed(3)}</span>
+            <span>BM25 ${hit.scores.bm25.toFixed(3)}</span>
+            <span>向量 ${hit.scores.vector.toFixed(3)}</span>
+            <span>图谱 ${hit.scores.graph.toFixed(3)}</span>
+          </div>
+        </article>
+      `).join("");
+      resultsCount.textContent = `${hits.length} 条结果`;
+      resultsSection.classList.toggle("hidden", hits.length === 0);
+      emptyState.classList.toggle("hidden", hits.length !== 0);
+    }
+
+    async function runStream(query) {
+      if (activeController) {
+        activeController.abort();
+      }
+      const controller = new AbortController();
+      activeController = controller;
+      resetStreamingUI(query);
+      setLoadingState(true);
+
+      try {
+        const response = await fetch(`/api/search/stream?q=${encodeURIComponent(query)}`, {
+          headers: { Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error("stream failed");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const messages = buffer.split("\n\n");
+          buffer = messages.pop() || "";
+
+          for (const message of messages) {
+            const lines = message.split("\n");
+            const eventLine = lines.find((line) => line.startsWith("event: "));
+            const dataLine = lines.find((line) => line.startsWith("data: "));
+            if (!eventLine || !dataLine) {
+              continue;
+            }
+            const event = eventLine.slice(7).trim();
+            const payload = JSON.parse(dataLine.slice(6));
+
+            if (event === "rewrite") {
+              const code = document.createElement("code");
+              code.textContent = payload;
+              rewritesList.appendChild(code);
+              rewritesStatus.textContent = "生成中";
+              continue;
+            }
+            if (event === "hits") {
+              rewritesStatus.textContent = rewritesList.childElementCount ? `已生成 ${rewritesList.childElementCount} 条` : "未生成";
+              renderHits(payload);
+              continue;
+            }
+            if (event === "answer") {
+              setAnswerMarkdown(answerBuffer + payload);
+              answerStatus.textContent = "生成中";
+              continue;
+            }
+            if (event === "done") {
+              rewritesStatus.textContent = rewritesList.childElementCount ? `已生成 ${rewritesList.childElementCount} 条` : "未生成";
+              answerStatus.textContent = answerBuffer.trim() ? "已完成" : "未生成";
+            }
+          }
+        }
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          setAnswerMarkdown("这次流式检索没接稳，请再试一次。");
+          answerStatus.textContent = "出错";
+        }
+      } finally {
+        if (activeController === controller) {
+          activeController = null;
+          setLoadingState(false);
+        }
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      const query = input.value.trim();
+      if (!query) {
+        return;
+      }
+      event.preventDefault();
+      runStream(query);
+    });
+
+    setAnswerMarkdown(answerContent.textContent);
+  </script>
 </body>
 </html>
