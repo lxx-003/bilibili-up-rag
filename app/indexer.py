@@ -5,7 +5,9 @@ import logging
 import os
 import pickle
 import re
+import time
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable
 
@@ -60,6 +62,8 @@ STOPWORDS = {
     "什么",
 }
 DEFAULT_VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "10"))
+EMBED_WORKERS = int(os.getenv("EMBED_WORKERS", "8"))
 
 
 def ensure_index() -> None:
@@ -342,11 +346,11 @@ def _build_chroma_collection(chunk_docs: list[ChunkDocument]) -> None:
         metadata={"hnsw:space": "cosine"},
     )
 
-    batch_size = 10
-    total_batches = (len(chunk_docs) + batch_size - 1) // batch_size
-    for batch_index, start in enumerate(range(0, len(chunk_docs), batch_size), start=1):
+    # ---- 准备每个批次的文档文本 ----
+    batch_size = EMBED_BATCH_SIZE
+    batches: list[tuple[int, list[ChunkDocument], list[str]]] = []
+    for start in range(0, len(chunk_docs), batch_size):
         batch = chunk_docs[start : start + batch_size]
-        logger.info("│     Embedding 批次 %d/%d  (%d 条)", batch_index, total_batches, len(batch))
         documents = [
             "\n".join(
                 [
@@ -361,11 +365,39 @@ def _build_chroma_collection(chunk_docs: list[ChunkDocument]) -> None:
             )
             for chunk in batch
         ]
-        embeddings = embed_texts(documents)
+        batches.append((start, batch, documents))
+
+    total_batches = len(batches)
+    logger.info("│     共 %d 个分块，分 %d 批（每批 %d 条），%d 线程并发",
+                len(chunk_docs), total_batches, batch_size, EMBED_WORKERS)
+
+    # ---- 多线程并发请求 Embedding ----
+    embeddings_map: dict[int, list[list[float]]] = {}
+    t0 = time.perf_counter()
+
+    def _embed_batch(batch_index: int, docs: list[str]) -> tuple[int, list[list[float]]]:
+        return batch_index, embed_texts(docs)
+
+    with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as pool:
+        futures = {
+            pool.submit(_embed_batch, idx, docs): idx
+            for idx, (_, _, docs) in enumerate(batches)
+        }
+        done_count = 0
+        for future in as_completed(futures):
+            batch_idx, embs = future.result()
+            embeddings_map[batch_idx] = embs
+            done_count += 1
+            if done_count % max(1, total_batches // 5) == 0 or done_count == total_batches:
+                logger.info("│     Embedding %d/%d 批完成 (%.1fs)",
+                            done_count, total_batches, time.perf_counter() - t0)
+
+    # ---- 按顺序写入 Chroma ----
+    for idx, (_, batch, documents) in enumerate(batches):
         collection.add(
             ids=[chunk.chunk_id for chunk in batch],
             documents=documents,
-            embeddings=embeddings,
+            embeddings=embeddings_map[idx],
             metadatas=[
                 {
                     "video_id": chunk.video_id,
