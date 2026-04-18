@@ -313,6 +313,7 @@ def _build_chroma_collection(chunk_docs: list[ChunkDocument]) -> None:
         pass
     collection = client.get_or_create_collection(
         name=CHROMA_COLLECTION,
+        metadata={"hnsw:space": "cosine"},
     )
 
     batch_size = 10
