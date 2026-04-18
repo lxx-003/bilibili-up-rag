@@ -438,12 +438,14 @@ body {
 }
 
 .segment-item {
-  padding: 14px 20px;
-  border-top: 1px solid var(--border);
+  padding: 16px 20px;
+  border-top: none;
 }
 
-.segment-item:first-child {
-  border-top: none;
+.segment-item + .segment-item {
+  margin-top: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .segment-top {
@@ -476,7 +478,7 @@ body {
 }
 
 .summary {
-  margin: 0;
+  margin: 8px 0 0;
   line-height: 1.7;
   font-size: 14px;
   color: var(--text-primary);

@@ -233,8 +233,16 @@ def _flush_chunk(
 
 
 def _build_summary(text: str, limit: int = 120) -> str:
-    compact = re.sub(r"\s+", "", text)
-    return compact[:limit] + ("..." if len(compact) > limit else "")
+    # 保留单个空格作为自然断句，只合并多余空白
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) > limit:
+        # 截断时尝试在空格处断开，避免切断词语
+        truncated = compact[:limit]
+        last_space = truncated.rfind(" ")
+        if last_space > limit * 0.5:
+            truncated = truncated[:last_space]
+        return truncated.strip() + "..."
+    return compact
 
 
 def _headline(text: str, limit: int = 16) -> str:
