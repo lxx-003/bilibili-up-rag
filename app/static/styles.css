@@ -410,6 +410,66 @@ body {
   font-size: 11px;
 }
 
+/* ── Video Group ── */
+.video-group .card-top {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.group-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.group-hit-count {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 2px 10px;
+  border-radius: 100px;
+  font-weight: 500;
+}
+
+.segments-list {
+  padding: 0;
+}
+
+.segment-item {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+
+.segment-item:first-child {
+  border-top: none;
+}
+
+.segment-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.segment-meta {
+  display: flex;
+  gap: 0;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.segment-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
 /* ── Card Body ── */
 .card-body {
   padding: 14px 20px 0;
@@ -591,6 +651,16 @@ pre::-webkit-scrollbar-thumb {
 
   .score-pills {
     flex-wrap: wrap;
+  }
+
+  .segment-top {
+    flex-wrap: wrap;
+  }
+
+  .segment-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
   }
 
   .meta {

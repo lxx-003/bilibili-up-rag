@@ -295,6 +295,7 @@ class SearchEngine:
         deduped: list[SearchHit] = []
         seen = set()
         for hit in ranked:
+            # 同视频同 20 秒窗口内只保留最高分（避免重复字幕段）
             signature = (hit.chunk.video_id, int(hit.chunk.start_time // 20))
             if signature in seen:
                 continue
