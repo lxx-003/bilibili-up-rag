@@ -56,39 +56,43 @@
       <div id="results-list">
       {% for hit in hits %}
       <article class="result-item">
-        <div class="rank-stripe"></div>
-        <div class="item-body">
-          <div class="item-head">
-            <div>
-              <h3>{{ hit.chunk.video_title }}</h3>
-              <div class="meta">
-                <span class="meta-tag"><span class="meta-icon">⏱</span>{{ "%.0f"|format(hit.chunk.start_time // 60) }}:{{ "%02d"|format((hit.chunk.start_time % 60)|int) }} – {{ "%.0f"|format(hit.chunk.end_time // 60) }}:{{ "%02d"|format((hit.chunk.end_time % 60)|int) }}</span>
-                <span class="meta-tag"><span class="meta-icon">§</span>{{ hit.chunk.section_title }}</span>
-                <span class="meta-tag">{{ hit.chunk.video_id }}</span>
-              </div>
+        <div class="card-top">
+          <span class="rank-badge">#{{ loop.index }}</span>
+          <div class="card-header">
+            <h3>{{ hit.chunk.video_title }}</h3>
+            <div class="meta">
+              <span class="meta-tag"><span class="meta-icon">⏱</span>{{ "%.0f"|format(hit.chunk.start_time // 60) }}:{{ "%02d"|format((hit.chunk.start_time % 60)|int) }} – {{ "%.0f"|format(hit.chunk.end_time // 60) }}:{{ "%02d"|format((hit.chunk.end_time % 60)|int) }}</span>
+              <span class="meta-tag"><span class="meta-icon">§</span>{{ hit.chunk.section_title }}</span>
             </div>
-            <a href="{{ hit.chunk.jump_url }}" target="_blank" rel="noreferrer">空降观看</a>
           </div>
+          <a class="jump-btn" href="{{ hit.chunk.jump_url }}" target="_blank" rel="noreferrer">▶ 空降</a>
+        </div>
+        <div class="card-body">
           <p class="summary">{{ hit.chunk.summary }}</p>
+          <details class="subtitle-fold">
+            <summary>展开原始字幕</summary>
+            <pre>{{ hit.chunk.text }}</pre>
+          </details>
+        </div>
+        <div class="card-footer">
           <div class="explanation">
             {% for part in hit.explanation.split(' + ') %}
             <span class="expl-tag {% if '关键词' in part %}kw{% elif '语义' in part %}vec{% elif '实体' in part or '扩展' in part %}gr{% elif '标题' in part %}ttl{% else %}ctx{% endif %}">{{ part }}</span>
             {% endfor %}
           </div>
-          <pre>{{ hit.chunk.text }}</pre>
           {% set total = hit.bm25_score + hit.vector_score + hit.graph_score %}
-          {% if total > 0 %}
-          <div class="score-bar">
-            <div class="score-seg s-bm25" style="width:{{ (hit.bm25_score / total * 100)|round(1) }}%"></div>
-            <div class="score-seg s-vector" style="width:{{ (hit.vector_score / total * 100)|round(1) }}%"></div>
-            <div class="score-seg s-graph" style="width:{{ (hit.graph_score / total * 100)|round(1) }}%"></div>
-          </div>
-          {% endif %}
-          <div class="score-legend">
-            <span><i class="score-dot d-bm25"></i>BM25 {{ "%.2f"|format(hit.bm25_score) }}</span>
-            <span><i class="score-dot d-vector"></i>向量 {{ "%.2f"|format(hit.vector_score) }}</span>
-            <span><i class="score-dot d-graph"></i>图谱 {{ "%.2f"|format(hit.graph_score) }}</span>
-            <span class="score-total">∑ {{ "%.3f"|format(hit.rerank_score) }}</span>
+          <div class="score-pills">
+            {% if total > 0 %}
+            <div class="score-bar-mini">
+              <div class="score-seg s-bm25" style="width:{{ (hit.bm25_score / total * 100)|round(1) }}%"></div>
+              <div class="score-seg s-vector" style="width:{{ (hit.vector_score / total * 100)|round(1) }}%"></div>
+              <div class="score-seg s-graph" style="width:{{ (hit.graph_score / total * 100)|round(1) }}%"></div>
+            </div>
+            {% endif %}
+            <span class="pill p-bm25">BM25 {{ "%.2f"|format(hit.bm25_score) }}</span>
+            <span class="pill p-vec">向量 {{ "%.2f"|format(hit.vector_score) }}</span>
+            <span class="pill p-graph">图谱 {{ "%.2f"|format(hit.graph_score) }}</span>
+            <span class="pill p-total">∑ {{ "%.3f"|format(hit.rerank_score) }}</span>
           </div>
         </div>
       </article>
@@ -257,7 +261,7 @@
     }
 
     function renderHits(hits) {
-      resultsList.innerHTML = hits.map((hit) => {
+      resultsList.innerHTML = hits.map((hit, i) => {
         const total = hit.scores.bm25 + hit.scores.vector + hit.scores.graph;
         const explParts = (hit.explanation || "").split(" + ").filter(Boolean);
         const explTags = explParts.map((p) =>
@@ -265,7 +269,7 @@
         ).join("");
 
         const scoreBar = total > 0 ? `
-          <div class="score-bar">
+          <div class="score-bar-mini">
             <div class="score-seg s-bm25" style="width:${(hit.scores.bm25 / total * 100).toFixed(1)}%"></div>
             <div class="score-seg s-vector" style="width:${(hit.scores.vector / total * 100).toFixed(1)}%"></div>
             <div class="score-seg s-graph" style="width:${(hit.scores.graph / total * 100).toFixed(1)}%"></div>
@@ -273,28 +277,32 @@
 
         return `
         <article class="result-item">
-          <div class="rank-stripe"></div>
-          <div class="item-body">
-            <div class="item-head">
-              <div>
-                <h3>${escapeHtml(hit.video_title)}</h3>
-                <div class="meta">
-                  <span class="meta-tag"><span class="meta-icon">⏱</span>${fmtTime(hit.start_time)} – ${fmtTime(hit.end_time)}</span>
-                  <span class="meta-tag"><span class="meta-icon">§</span>${escapeHtml(hit.section_title || "")}</span>
-                  <span class="meta-tag">${escapeHtml(hit.video_id)}</span>
-                </div>
+          <div class="card-top">
+            <span class="rank-badge">#${i + 1}</span>
+            <div class="card-header">
+              <h3>${escapeHtml(hit.video_title)}</h3>
+              <div class="meta">
+                <span class="meta-tag"><span class="meta-icon">⏱</span>${fmtTime(hit.start_time)} – ${fmtTime(hit.end_time)}</span>
+                <span class="meta-tag"><span class="meta-icon">§</span>${escapeHtml(hit.section_title || "")}</span>
               </div>
-              <a href="${escapeHtml(hit.jump_url)}" target="_blank" rel="noreferrer">空降观看</a>
             </div>
+            <a class="jump-btn" href="${escapeHtml(hit.jump_url)}" target="_blank" rel="noreferrer">▶ 空降</a>
+          </div>
+          <div class="card-body">
             <p class="summary">${escapeHtml(hit.summary || "")}</p>
+            <details class="subtitle-fold">
+              <summary>展开原始字幕</summary>
+              <pre>${escapeHtml(hit.text || "")}</pre>
+            </details>
+          </div>
+          <div class="card-footer">
             <div class="explanation">${explTags}</div>
-            <pre>${escapeHtml(hit.text || "")}</pre>
-            ${scoreBar}
-            <div class="score-legend">
-              <span><i class="score-dot d-bm25"></i>BM25 ${hit.scores.bm25.toFixed(2)}</span>
-              <span><i class="score-dot d-vector"></i>向量 ${hit.scores.vector.toFixed(2)}</span>
-              <span><i class="score-dot d-graph"></i>图谱 ${hit.scores.graph.toFixed(2)}</span>
-              <span class="score-total">∑ ${hit.scores.rerank.toFixed(3)}</span>
+            <div class="score-pills">
+              ${scoreBar}
+              <span class="pill p-bm25">BM25 ${hit.scores.bm25.toFixed(2)}</span>
+              <span class="pill p-vec">向量 ${hit.scores.vector.toFixed(2)}</span>
+              <span class="pill p-graph">图谱 ${hit.scores.graph.toFixed(2)}</span>
+              <span class="pill p-total">∑ ${hit.scores.rerank.toFixed(3)}</span>
             </div>
           </div>
         </article>`;
@@ -395,6 +403,10 @@
     });
 
     setAnswerMarkdown(answerContent.textContent);
+
+    document.querySelectorAll(".score-seg[data-width]").forEach(el => {
+      el.style.width = el.dataset.width + "%";
+    });
   </script>
 </body>
 </html>
