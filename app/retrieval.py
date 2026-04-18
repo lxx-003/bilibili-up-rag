@@ -62,8 +62,10 @@ class SearchEngine:
             yield {"type": "done"}
             return
 
-        rewrites = self._rewrite_queries(cleaned_query)
-        for rewrite in rewrites:
+        yield {"type": "status", "value": "LLM 改写中"}
+        rewrites = []
+        for rewrite in self._stream_rewrite_queries(cleaned_query):
+            rewrites.append(rewrite)
             yield {"type": "rewrite", "value": rewrite}
 
         ranked = self._search_hits(cleaned_query, rewrites, top_k=top_k)
@@ -90,6 +92,78 @@ class SearchEngine:
         return self._rerank(query, scores, top_k=top_k)
 
     def _rewrite_queries(self, query: str) -> list[str]:
+        return list(self._stream_rewrite_queries(query))
+
+    def _stream_rewrite_queries(self, query: str):
+        if not is_configured():
+            yield from self._rule_rewrite_queries(query)
+            return
+
+        rewrites = []
+        seen = set()
+        buffer = ""
+
+        try:
+            for part in stream_answer(self._rewrite_messages(query), temperature=0.1):
+                buffer += part.replace("\r\n", "\n")
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    current = self._clean_rewrite_line(line)
+                    if not current or current in seen:
+                        continue
+                    seen.add(current)
+                    rewrites.append(current)
+                    yield current
+                    if len(rewrites) >= 10:
+                        return
+
+            current = self._clean_rewrite_line(buffer)
+            if current and current not in seen and len(rewrites) < 10:
+                seen.add(current)
+                rewrites.append(current)
+                yield current
+        except Exception:
+            rewrites = []
+
+        if not rewrites:
+            yield from self._rule_rewrite_queries(query)
+
+    def _rewrite_messages(self, query: str) -> list[dict]:
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "你是 B 站字幕 RAG 的查询改写器。"
+                    "你的任务是生成用于混合检索的多个搜索 query，不是回答问题。"
+                    "输出 6 到 10 行，每行一个 query。"
+                    "不要编号、不要项目符号、不要 Markdown、不要解释。"
+                    "第一行必须保留用户原始问题。"
+                    "其余行应覆盖：核心关键词、同义说法、可能的视频标题表达、背景/原因/影响类伪答案查询。"
+                    "如果用户问题包含中文专名，可以加入一行拼音或常见别名。"
+                    "query 要短，适合字幕检索。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"用户问题：{query}",
+            },
+        ]
+
+    def _clean_rewrite_line(self, line: str) -> str:
+        current = line.strip()
+        current = re.sub(r"^[-*+\d\s.、)）]+", "", current).strip()
+        current = current.strip("`'\"“”‘’，,[]")
+        current = re.sub(r"\s+", " ", current)
+        if not current:
+            return ""
+        lowered = current.lower()
+        if lowered in {"query", "queries", "rewrites"}:
+            return ""
+        if current.startswith("{") or current.endswith("}"):
+            return ""
+        return current
+
+    def _rule_rewrite_queries(self, query: str) -> list[str]:
         rewrites = [query]
         normalized = re.sub(r"[，。！？、\s]+", " ", query).strip()
         if normalized and normalized != query:

@@ -298,6 +298,10 @@
             const event = eventLine.slice(7).trim();
             const payload = JSON.parse(dataLine.slice(6));
 
+            if (event === "status") {
+              rewritesStatus.textContent = payload;
+              continue;
+            }
             if (event === "rewrite") {
               const code = document.createElement("code");
               code.textContent = payload;
