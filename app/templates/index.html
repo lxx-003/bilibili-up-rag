@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bilibili UP RAG</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="search-block">
+      <h1>Bilibili UP 字幕 RAG</h1>
+      <p class="intro">输入问题，系统会从 UP 主全部字幕里做混合检索、重排序，并给出可直接空降的视频证据。</p>
+      {% if metadata %}
+      <p class="index-meta">当前索引 {{ metadata.indexed_video_count }} 个视频，{{ metadata.indexed_chunk_count }} 个字幕块。</p>
+      {% endif %}
+      <form method="get" action="/" class="search-form">
+        <input
+          type="text"
+          name="q"
+          value="{{ query }}"
+          placeholder="例如：圣多美为什么总是发展不起来？"
+          autocomplete="off"
+        />
+        <button type="submit">搜索</button>
+      </form>
+      {% if rewrites %}
+      <div class="rewrites">
+        <span class="label">查询改写</span>
+        {% for item in rewrites %}
+        <code>{{ item }}</code>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+
+    {% if answer %}
+    <section class="answer-block">
+      <h2>综合回答</h2>
+      <p>{{ answer }}</p>
+    </section>
+    {% endif %}
+
+    {% if hits %}
+    <section class="results">
+      <div class="section-head">
+        <h2>证据片段</h2>
+        <span>{{ hits|length }} 条结果</span>
+      </div>
+      {% for hit in hits %}
+      <article class="result-item">
+        <div class="item-head">
+          <div>
+            <h3>{{ hit.chunk.video_title }}</h3>
+            <p class="meta">
+              <span>{{ hit.chunk.video_id }}</span>
+              <span>{{ "%.1f"|format(hit.chunk.start_time) }}s - {{ "%.1f"|format(hit.chunk.end_time) }}s</span>
+              <span>{{ hit.chunk.section_title }}</span>
+            </p>
+          </div>
+          <a href="{{ hit.chunk.jump_url }}" target="_blank" rel="noreferrer">空降观看</a>
+        </div>
+        <p class="summary">{{ hit.chunk.summary }}</p>
+        <p class="explanation">{{ hit.explanation }}</p>
+        <pre>{{ hit.chunk.text }}</pre>
+        <div class="score-row">
+          <span>总分 {{ "%.3f"|format(hit.rerank_score) }}</span>
+          <span>BM25 {{ "%.3f"|format(hit.bm25_score) }}</span>
+          <span>向量 {{ "%.3f"|format(hit.vector_score) }}</span>
+          <span>图谱 {{ "%.3f"|format(hit.graph_score) }}</span>
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+    {% elif query %}
+    <section class="empty-state">
+      <p>没找到结果，试试更短的关键词，或者直接搜国家、人物、事件名。</p>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>
