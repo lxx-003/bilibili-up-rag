@@ -10,10 +10,10 @@ from typing import Iterable
 
 import chromadb
 import jieba
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 from pypinyin import Style, lazy_pinyin
 from rank_bm25 import BM25Okapi
 
+from app.llm import get_embedding_dimensions, get_embedding_model, embed_texts, get_base_url
 from app.models import ChunkDocument, VideoDocument
 from app.srt_parser import parse_srt
 
@@ -58,7 +58,7 @@ DEFAULT_VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))
 
 
 def ensure_index() -> None:
-    if CHUNKS_PATH.exists() and MATRIX_PATH.exists() and KG_PATH.exists() and CHROMA_DIR.exists():
+    if _index_is_compatible():
         return
     build_index()
 
@@ -120,6 +120,9 @@ def build_index() -> None:
         "video_limit": DEFAULT_VIDEO_LIMIT,
         "indexed_video_count": len(video_docs),
         "indexed_chunk_count": len(chunk_docs),
+        "embedding_model": get_embedding_model(),
+        "embedding_dimensions": get_embedding_dimensions(),
+        "embedding_base_url": get_base_url(),
     }
     (INDEX_DIR / "metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -134,6 +137,25 @@ def load_index_payload() -> tuple[list[dict], dict, dict, dict]:
     graph = json.loads(KG_PATH.read_text(encoding="utf-8"))
     metadata = json.loads((INDEX_DIR / "metadata.json").read_text(encoding="utf-8"))
     return chunks, matrix, graph, metadata
+
+
+def _index_is_compatible() -> bool:
+    metadata_path = INDEX_DIR / "metadata.json"
+    if not (
+        CHUNKS_PATH.exists()
+        and MATRIX_PATH.exists()
+        and KG_PATH.exists()
+        and CHROMA_DIR.exists()
+        and metadata_path.exists()
+    ):
+        return False
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return (
+        metadata.get("embedding_model") == get_embedding_model()
+        and int(metadata.get("embedding_dimensions", 0)) == get_embedding_dimensions()
+        and metadata.get("embedding_base_url") == get_base_url()
+    )
 
 
 def _parse_filename(path: Path) -> tuple[str, str] | None:
@@ -282,35 +304,36 @@ def _fit_retrieval_artifacts(chunk_docs: list[ChunkDocument]) -> None:
 def _build_chroma_collection(chunk_docs: list[ChunkDocument]) -> None:
     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    embedding_function = DefaultEmbeddingFunction()
     try:
         client.delete_collection(CHROMA_COLLECTION)
     except Exception:
         pass
     collection = client.get_or_create_collection(
         name=CHROMA_COLLECTION,
-        embedding_function=embedding_function,
     )
 
-    batch_size = 128
+    batch_size = 10
     for start in range(0, len(chunk_docs), batch_size):
         batch = chunk_docs[start : start + batch_size]
+        documents = [
+            "\n".join(
+                [
+                    chunk.video_title,
+                    chunk.section_title,
+                    chunk.summary,
+                    chunk.context_text,
+                    " ".join(chunk.keyword_list),
+                    " ".join(chunk.entity_list),
+                    chunk.pinyin_text,
+                ]
+            )
+            for chunk in batch
+        ]
+        embeddings = embed_texts(documents)
         collection.add(
             ids=[chunk.chunk_id for chunk in batch],
-            documents=[
-                "\n".join(
-                    [
-                        chunk.video_title,
-                        chunk.section_title,
-                        chunk.summary,
-                        chunk.context_text,
-                        " ".join(chunk.keyword_list),
-                        " ".join(chunk.entity_list),
-                        chunk.pinyin_text,
-                    ]
-                )
-                for chunk in batch
-            ],
+            documents=documents,
+            embeddings=embeddings,
             metadatas=[
                 {
                     "video_id": chunk.video_id,

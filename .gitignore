@@ -16,6 +16,9 @@ env/
 
 # Local runtime artifacts
 *.log
+.env
+.env.*
+!.env.example
 
 # Generated retrieval indexes
 /data/index/

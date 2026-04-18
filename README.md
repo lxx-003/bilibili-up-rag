@@ -2,6 +2,12 @@
 
 一个可本地运行的面试项目 MVP：输入问题，系统会从 `data/subs` 下全部 `.srt` 字幕中做检索，并返回带 B 站空降链接的证据片段。
 
+当前版本已切换为阿里云百炼 OpenAI 兼容模式：
+
+- 向量模型：`text-embedding-v4`
+- 文本生成模型：`qwen3.6-flash`
+- `base_url`：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+
 ## 功能
 
 - SRT 解析与时间戳保留
@@ -31,20 +37,31 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. 启动服务
+2. 配置百炼环境变量
+
+```bash
+cp .env.example .env
+export DASHSCOPE_API_KEY=你的百炼Key
+export DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+export DASHSCOPE_EMBEDDING_MODEL=text-embedding-v4
+export DASHSCOPE_CHAT_MODEL=qwen3.6-flash
+```
+
+3. 启动服务
 
 ```bash
 python -m app.main
 ```
 
-3. 打开浏览器
+4. 打开浏览器
 
 ```text
 http://127.0.0.1:8000
 ```
 
 第一次启动会自动构建索引。
-当前向量检索使用 `Chroma PersistentClient`，向量会持久化在 `data/chroma`。
+当前向量检索使用阿里云百炼 `text-embedding-v4` 生成向量，向量会持久化在 `data/chroma`。
+如果你更换了 embedding 模型、维度或 `base_url`，项目会自动重建索引。
 
 默认只索引前 `20` 个视频，适合先快速验证。想切到全量时：
 
@@ -75,8 +92,6 @@ curl "http://127.0.0.1:8000/api/search?q=圣多美为什么发展不起来"
 
 ## 后续可继续增强
 
-- 接入更强的 embedding 模型
 - 引入真正的 cross-encoder reranker
-- 用 LLM 生成更自然的综合答案
 - 增加对话记忆和多轮改写
 - 加入人工标注评测集做召回率对比

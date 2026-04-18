@@ -6,7 +6,6 @@ from collections import defaultdict
 
 import chromadb
 import numpy as np
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 from app.indexer import (
     CHROMA_COLLECTION,
@@ -16,6 +15,7 @@ from app.indexer import (
     _tokenize,
     load_index_payload,
 )
+from app.llm import generate_answer, is_configured, embed_texts
 from app.models import SearchHit, chunk_from_dict
 
 
@@ -34,7 +34,6 @@ class SearchEngine:
         self.chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
         self.collection = self.chroma_client.get_or_create_collection(
             name=CHROMA_COLLECTION,
-            embedding_function=DefaultEmbeddingFunction(),
         )
 
     def search(self, query: str, top_k: int = 8) -> dict:
@@ -49,10 +48,10 @@ class SearchEngine:
 
         rewrites = self._rewrite_queries(cleaned_query)
         scores = defaultdict(lambda: {"bm25": 0.0, "vector": 0.0, "graph": 0.0})
+        vector_score_sets = self._vector_search_many(rewrites)
 
-        for current in rewrites:
+        for current, vector_scores in zip(rewrites, vector_score_sets):
             bm25_scores = self._bm25_search(current)
-            vector_scores = self._vector_search(current)
             graph_scores = self._graph_boost(current)
             for idx, value in bm25_scores.items():
                 scores[idx]["bm25"] = max(scores[idx]["bm25"], value)
@@ -116,23 +115,29 @@ class SearchEngine:
         best_indices = np.argsort(raw_scores)[-30:]
         return {int(idx): float(raw_scores[idx] / max_score) for idx in best_indices if raw_scores[idx] > 0}
 
-    def _vector_search(self, query: str) -> dict[int, float]:
+    def _vector_search_many(self, queries: list[str]) -> list[dict[int, float]]:
+        if not queries:
+            return []
+        embeddings = embed_texts([f"{query}\n{_to_pinyin(query)}" for query in queries])
         result = self.collection.query(
-            query_texts=[f"{query}\n{_to_pinyin(query)}"],
+            query_embeddings=embeddings,
             n_results=30,
             include=["distances"],
         )
-        ids = result.get("ids", [[]])[0]
-        distances = result.get("distances", [[]])[0]
-        scores: dict[int, float] = {}
-        for chunk_id, distance in zip(ids, distances):
-            idx = self.chunk_index_by_id.get(chunk_id)
-            if idx is None:
-                continue
-            similarity = max(0.0, 1.0 - float(distance))
-            if similarity > 0:
-                scores[idx] = similarity
-        return scores
+        score_sets: list[dict[int, float]] = []
+        ids_groups = result.get("ids", [])
+        distance_groups = result.get("distances", [])
+        for ids, distances in zip(ids_groups, distance_groups):
+            current_scores: dict[int, float] = {}
+            for chunk_id, distance in zip(ids, distances):
+                idx = self.chunk_index_by_id.get(chunk_id)
+                if idx is None:
+                    continue
+                similarity = max(0.0, 1.0 - float(distance))
+                if similarity > 0:
+                    current_scores[idx] = similarity
+            score_sets.append(current_scores)
+        return score_sets
 
     def _graph_boost(self, query: str) -> dict[int, float]:
         entities = _extract_entities(query, limit=6) + _tokenize(query)[:6]
@@ -208,13 +213,60 @@ class SearchEngine:
     def _synthesize_answer(self, query: str, hits: list[SearchHit]) -> str:
         if not hits:
             return "暂时没有找到明确命中的字幕片段，可以换一个更短的关键词，或者直接输入国家、人物、事件名。"
-        lead = hits[0].chunk
-        points = []
-        for hit in hits[:3]:
-            points.append(
-                f"{hit.chunk.video_title} 在 {self._format_time(hit.chunk.start_time)} 附近提到：{hit.chunk.summary}"
+        if not is_configured():
+            lead = hits[0].chunk
+            points = []
+            for hit in hits[:3]:
+                points.append(
+                    f"{hit.chunk.video_title} 在 {self._format_time(hit.chunk.start_time)} 附近提到：{hit.chunk.summary}"
+                )
+            return f"围绕“{query}”，当前最相关的内容集中在《{lead.video_title}》等视频里。" + " ".join(points)
+
+        evidence_blocks = []
+        for index, hit in enumerate(hits[:4], start=1):
+            evidence_blocks.append(
+                "\n".join(
+                    [
+                        f"[证据{index}] 视频：{hit.chunk.video_title}",
+                        f"时间：{self._format_time(hit.chunk.start_time)} - {self._format_time(hit.chunk.end_time)}",
+                        f"章节：{hit.chunk.section_title}",
+                        f"摘要：{hit.chunk.summary}",
+                        f"字幕：{hit.chunk.text}",
+                    ]
+                )
             )
-        return f"围绕“{query}”，当前最相关的内容集中在《{lead.video_title}》等视频里。" + " ".join(points)
+        evidence_text = "\n\n".join(evidence_blocks)
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是一个谨慎的 B 站字幕检索助手。"
+                    "请严格根据给定证据回答，不要编造。"
+                    "先给出简洁结论，再用 2 到 4 条要点概括。"
+                    "如果证据不足，要明确说证据不足。"
+                    "回答中尽量带上视频标题和时间点。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"用户问题：{query}\n\n"
+                    f"可用证据：\n\n{evidence_text}"
+                ),
+            },
+        ]
+        try:
+            answer = generate_answer(messages)
+            return answer or "检索到了相关片段，但模型没有返回可用答案。"
+        except Exception:
+            lead = hits[0].chunk
+            points = []
+            for hit in hits[:3]:
+                points.append(
+                    f"{hit.chunk.video_title} 在 {self._format_time(hit.chunk.start_time)} 附近提到：{hit.chunk.summary}"
+                )
+            return f"围绕“{query}”，当前最相关的内容集中在《{lead.video_title}》等视频里。" + " ".join(points)
 
     def _format_time(self, value: float) -> str:
         minutes = int(value // 60)
