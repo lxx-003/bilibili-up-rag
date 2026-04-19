@@ -63,7 +63,8 @@ STOPWORDS = {
 }
 DEFAULT_VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))
 EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "10"))
-EMBED_WORKERS = int(os.getenv("EMBED_WORKERS", "8"))
+EMBED_WORKERS = int(os.getenv("EMBED_WORKERS", "2"))
+EMBED_INTERVAL = float(os.getenv("EMBED_INTERVAL", "0.3"))
 
 
 def ensure_index() -> None:
@@ -375,7 +376,12 @@ def _build_chroma_collection(chunk_docs: list[ChunkDocument]) -> None:
     embeddings_map: dict[int, list[list[float]]] = {}
     t0 = time.perf_counter()
 
+    import threading
+    rate_lock = threading.Lock()
+
     def _embed_batch(batch_index: int, docs: list[str]) -> tuple[int, list[list[float]]]:
+        with rate_lock:
+            time.sleep(EMBED_INTERVAL)
         return batch_index, embed_texts(docs)
 
     with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as pool:

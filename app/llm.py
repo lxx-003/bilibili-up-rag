@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
+import time
 import os
 from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")
@@ -52,16 +54,29 @@ def get_client() -> OpenAI:
     )
 
 
+_logger = logging.getLogger("app.llm")
+
+EMBED_MAX_RETRIES = int(os.getenv("EMBED_MAX_RETRIES", "6"))
+
+
 def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
-    response = get_client().embeddings.create(
-        model=get_embedding_model(),
-        input=texts,
-        dimensions=get_embedding_dimensions(),
-        encoding_format="float",
-    )
-    return [item.embedding for item in response.data]
+    for attempt in range(1, EMBED_MAX_RETRIES + 1):
+        try:
+            response = get_client().embeddings.create(
+                model=get_embedding_model(),
+                input=texts,
+                dimensions=get_embedding_dimensions(),
+                encoding_format="float",
+            )
+            return [item.embedding for item in response.data]
+        except RateLimitError as exc:
+            if attempt == EMBED_MAX_RETRIES:
+                raise
+            wait = min(2 ** attempt, 30)
+            _logger.warning("Embedding 限流(429)，第 %d 次重试，等待 %.1fs: %s", attempt, wait, exc)
+            time.sleep(wait)
 
 
 def generate_answer(messages: list[dict], temperature: float = 0.2) -> str:
